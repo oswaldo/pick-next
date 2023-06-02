@@ -1,0 +1,7 @@
+.idea/
+.intellij/
+.bloop/
+.metals/
+.bsp/
+.scala-build/
+.vscode/
