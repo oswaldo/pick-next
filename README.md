@@ -31,3 +31,7 @@ Or go to Scala CLI [installation page](https://scala-cli.virtuslab.org/install) 
 Clone this repository and change the values defined at the beginning of the script to match your needs.
 
 Then, run the script with `./picknext.sc` and it will print the selected people.
+
+## Why the code looks kind of funny?
+
+It was written mainly to experiment with GitHub Copilot in a super simple self contained problem, to get a feeling of the interference between documentation and generated code.
