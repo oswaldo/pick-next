@@ -1,3 +1,7 @@
+target/
+project/project/
+project/target/
+metals.sbt
 .idea/
 .intellij/
 .bloop/
@@ -5,3 +9,4 @@
 .bsp/
 .scala-build/
 .vscode/
+people/
