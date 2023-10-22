@@ -1,6 +1,6 @@
 ThisBuild / version := "0.1.0-SNAPSHOT"
 
-ThisBuild / scalaVersion := "3.3.0"
+ThisBuild / scalaVersion := "3.3.1"
 
 enablePlugins(ScalaJSPlugin)
 
@@ -10,7 +10,7 @@ lazy val root = project
   .settings(
     name := "laminar-scalajs",
     libraryDependencies ++= Seq(
-      "com.raquo" %%% "laminar" % "15.0.1",
+      "com.raquo"    %%% "laminar"     % "15.0.1",
       "org.scala-js" %%% "scalajs-dom" % "2.4.0",
-    )
+    ),
   )
