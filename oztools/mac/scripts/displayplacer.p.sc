@@ -5,8 +5,8 @@
 //> using file "../../common/tools.sc"
 //> using file "../displayplacer.sc"
 
-import core.* 
-import tools.* 
+import core.*
+import tools.*
 import displayplacer.*
 
 displayplacer.installIfNeeded()

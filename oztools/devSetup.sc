@@ -15,19 +15,19 @@ import virtualBox.*
 
 println("Finishing setup...")
 installIfNeeded(
-    //fig for some awesome terminal autocomplete
-    fig,
-    //vscode is the editor being used for development of this project
-    vscode,
-    //virtualBox for running VMs
-    virtualBox,
+  // fig for some awesome terminal autocomplete
+  fig,
+  // vscode is the editor being used for development of this project
+  vscode,
+  // virtualBox for running VMs
+  virtualBox,
 )
 vscode.installExtensionsIfNeeded(
-    vscode.copilotExtension,
-    vscode.copilotChatExtension,
-    vscode.scalaLangExtension,
-    vscode.scalametalsExtension,
-    vscode.vscodeIconsExtension,
+  vscode.copilotExtension,
+  vscode.copilotChatExtension,
+  vscode.scalaLangExtension,
+  vscode.scalametalsExtension,
+  vscode.vscodeIconsExtension,
 )
 virtualBox.constructVm(virtualBoxImage.ubuntu23_04)
 println("Finished setup!")
