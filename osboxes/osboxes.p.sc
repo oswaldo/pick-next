@@ -1,4 +1,4 @@
-#!/usr/bin/env -S scala-cli -S 3
+#!/usr/bin/env -S scala-cli shebang -S 3
 
 //> using scala 3.3.1
 //> using file "../common/core.sc"
@@ -7,6 +7,7 @@
 //> using toolkit latest
 
 import core.*
+import core.given
 import tools.*
 import util.*
 import osboxes.*
