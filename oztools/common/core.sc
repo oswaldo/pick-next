@@ -1,5 +1,5 @@
 //> using toolkit latest
-//> using dep "io.kevinlee::just-semver::0.13.0"
+//> using dep "io.kevinlee::just-semver-core::0.13.0"
 //> using dep "com.lihaoyi::pprint::0.8.1"
 
 import os.*
@@ -23,8 +23,7 @@ def arg[T: ClassTag](i: Int, default: => (T | String))(using args: Array[String]
         case s: String =>
           parser(s).getOrElse(throw new Exception(s"Arg $i: Parsing the default value $s resulted in None"))
         case v: T => v
-        // this shouldn't happen as the default should be either a string or a T
-        case v => throw new Exception(s"Arg $i: Unexpected value $v of type ${v.getClass}")
+        case null => throw new Exception(s"Arg $i: Unexpected null default value")
 
 def argRequired[T: ClassTag](i: Int, missingMessage: => String)(using args: Array[String], parser: (String) => T): T =
   arg(i, throw new Exception(s"Arg $i: $missingMessage"))
@@ -42,6 +41,18 @@ given optionParser[T: ClassTag](using parser: (String => T)): (String => Option[
       case Success(v) => Some(v)
       case Failure(e) =>
         throw new Exception(s"Failed to parse $s as ${implicitly[ClassTag[T]].runtimeClass.getSimpleName}", e)
+
+def argOrEnv[T: ClassTag](i: Int, envKey: String, default: => (T | String))(using args: Array[String], parser: (String) => Option[T]): T =
+  arg(i,Option(System.getenv(envKey))
+    .flatMap(parser(_))
+    .getOrElse(default)
+  )
+
+def argOrEnvRequired[T: ClassTag](i: Int, envKey: String, missingMessage: => String)(using args: Array[String], parser: (String) => T): T =
+  argOrEnv(i, envKey, throw new Exception(s"Arg $i | Env $envKey: $missingMessage"))
+
+def argCallerOrCurrentFolder(i: Int)(using args: Array[String], parser: (String) => Path): Path =
+  argOrEnv(i, EnvCallerFolder, os.pwd)
 
 //it is a common case that the --version or equivalent of some tool outputs one or more lines where the line containing the actual version is prefixed by some string. this function tries to parse the version from the output of a tool that follows this pattern
 def parseVersionFromLines(lines: List[String], versionLinePrefix: String): InstalledVersion =
@@ -187,6 +198,14 @@ val replaceCoreScAbsolutePath = StringReplacement(
   replacement = (os.pwd / "common" / "core.sc").toString,
 )
 
+def replaceCoreScCommonPath(path: Path) = StringReplacement(
+  originalFragment = "../../core.sc",
+  replacement = {
+    //we need to check the depth of the path relative to the common folder, and then generate the relative path to the common folder. for instance, if the new script being generated will live in xzy/scripts, the relative path to the common folder will be ../../common/core.sc
+    "../" * path.relativeTo(os.pwd / "common").segments.size + "common/core.sc"
+  },
+)
+
 val replaceOsPwdToolsAbsoluteScript = StringReplacement(
   originalFragment = "given wd: Path = os.pwd",
   replacement = s"given wd: Path = os.root / os.RelPath(\"${os.pwd.toString
@@ -222,7 +241,8 @@ def wrapScripts(scriptsFolder: Path, installFolder: Path) =
         os.write.over(wrapper, specificWrapper)
         os.perms.set(wrapper, "rwxr-xr-x")
       }
-  else println(s"  Skipping wrapping scripts in $scriptsFolder as it doesn't exist")
+  else println(s"  No scripts found in $scriptsFolder")
+end wrapScripts
 
 val InstallFolder = os.home / "oztools"
 
@@ -249,11 +269,11 @@ def addInstallFolderToPath() =
     }
     false
   else
-    println(s"$InstallFolder already in the PATH")
     true
 
-def installWrappers(scriptFolders: Path*) =
+def installWrappers(artifacts: Artifact*): Unit =
   addInstallFolderToPath()
+  val scriptFolders = artifacts.map(_.scriptsFolder).filter(os.exists)
   println(
     s"Adding to folder $InstallFolder wrapper scripts for the ones in the following folders:${scriptFolders
         .mkString("\n  ", "\n  ", "")}",
@@ -262,6 +282,7 @@ def installWrappers(scriptFolders: Path*) =
   scriptFolders.foreach { folder =>
     wrapScripts(folder, InstallFolder)
   }
+  // TODO think about deleting orphan wrappers
 
 trait VersionCompatibilityProperties:
   def installedVersion: InstalledVersion
@@ -361,6 +382,7 @@ case class Dependency(artifact: Artifact, version: RequiredVersion):
 trait Artifact:
   val name: String
   val dependencies: List[Dependency]       = List.empty
+  def scriptsFolder: Path = os.pwd / name / "scripts"
   def installedVersion()(using wd: MaybeGiven[Path]): InstalledVersion = InstalledVersion.NA
   def isInstalled(): Boolean               = installedVersion() != InstalledVersion.Absent
   def isAbsent(): Boolean                  = installedVersion() == InstalledVersion.Absent
@@ -376,12 +398,17 @@ trait Artifact:
       println(s"installing $name...")
       brew.installFormula(name)
       println(s"$name is installedVersion")
+  def postInstall(requiredVersion: RequiredVersion): Unit = ()
   def upgrade(versionCompatibility: VersionCompatibility): InstalledVersion =
     // TODO make the concept of a PackageManager explicit, so we can pick the right one or abort if none available
     println(s"upgrading $name...")
     brew.installFormula(name)
     println(s"$name is upgraded")
     installedVersion()
+  private def doInstall(requiredVersion: RequiredVersion): Unit =
+    install(requiredVersion)
+    println(s"Running post install for $name...")
+    postInstall(requiredVersion)
   def installIfNeeded(requiredVersion: RequiredVersion = RequiredVersion.Latest): Unit =
     installDependencies()
     println(s"checking if $name is installed...")
@@ -394,7 +421,7 @@ trait Artifact:
         println(
           s"$name is already installed in an incompatible version. will try installing the required version (installed: $installed, required: $required)...",
         )
-        install(requiredVersion)
+        doInstall(requiredVersion)
       case VersionCompatibility.Outdated(installed, required) =>
         println(
           s"$name is already installed in an outdated version. will try upgrading (installed: $installed, required: $required)...",
@@ -402,7 +429,7 @@ trait Artifact:
         upgrade(versionCompatibility)
       case VersionCompatibility.Missing(installed, required) =>
         println(s"$name is not installed. will try installing it (required: $required)...")
-        install(requiredVersion)
+        doInstall(requiredVersion)
       case VersionCompatibility.Unknown(installed, required) =>
         required match
           case RequiredVersion.Any =>
@@ -414,6 +441,7 @@ trait Artifact:
               s"$name is already installed but the compatibility check failed. will try upgrading so we try getting to the required version (installed: $installed, required: $required)...",
             )
             upgrade(versionCompatibility)
+  end installIfNeeded
 end Artifact
 
 def installIfNeeded(artifacts: Artifact*): Unit =
@@ -422,9 +450,13 @@ def installIfNeeded(artifacts: Artifact*): Unit =
     println("\n")
     d.installIfNeeded()
   }
+  installWrappers(artifacts*)
 
-def installIfNeeded(artifacts: List[Artifact]): Unit =
-  installIfNeeded(artifacts*)
+def installIfNeeded(artifactSet: ArtifactSet): Unit =
+  installIfNeeded(artifactSet.artifacts.toList*)
+
+def installIfNeeded(artifactSet: Set[Artifact]): Unit =
+  installIfNeeded(artifactSet.toList*)
 
 trait Tool(
   override val name: String,
@@ -504,10 +536,75 @@ trait ExtensionManagement:
       println(s"extensions for $name are installed")
     else println(s"extensions for $name are already installed")
 
-trait Cleanup:
+trait ManagesSource:
+  def checkRequirements(path: Path): Unit =
+    // TODO filter the ones we have no write access to
+    // for safety, we require that the path is at least one level below the home folder
+    require(
+      path.relativeTo(os.home).segments.size >= 1,
+      s"Path $path is not below the home folder",
+    )
+  def subpathRecursiveExists(path: Path, subpath: String): Boolean =
+    checkRequirements(path)
+    os.walk(path).exists(_.last == subpath)
+  def subpathRecursiveFilter(path: Path, subpath: String) =
+    checkRequirements(path)
+    os.walk.stream(path).filter(_.last == subpath)
+
+trait CompilePath:
+  val compilePathName: String
+  //depending on the tool, it can only compile if there is some project descriptor present
+  def canCompile()(using path: Path): Boolean = true
+
+trait CanClean extends ManagesSource with CompilePath:
   this: Tool =>
-  def isDirty(path: Path): Boolean
-  def cleanup(path: Path): Unit
+  def isDirty()(using path: Path): Boolean =
+    if !canCompile() then
+      println(s"  $name doesn't manage $path. Skipping cleanup.")
+      false
+    else
+      println(
+        s"Checking if $path is dirty by recursively looking for $compilePathName folders we could potentially remove...",
+      )
+      subpathRecursiveExists(path, compilePathName)
+
+  def cleanup()(using path: Path): Unit =
+    println(s"Cleaning up $path from $name's $compilePathName folders...")
+    // TODO confirmation for destructive operations
+    subpathRecursiveFilter(path, compilePathName).foreach { buildPath =>
+      println(s"  Removing $buildPath")
+      os.remove.all(buildPath)
+    }
+
+// TODO for this operations that run an external build tool, check if the implicit path is a file or folder, and look for the relevant files if it's a folder
+trait CanCompile extends ManagesSource with CompilePath:
+  this: Tool =>
+  //some tools might need to check for dependencies before compiling
+  def checkDependencies()(using path: Path): Unit = ()
+  def compile()(using path: Path): Unit =
+    checkDependencies()
+    runVerbose("compile")
+
+trait CanTest extends ManagesSource:
+  this: Tool =>
+  def test()(using path: Path): Unit =
+    runVerbose("test")
+
+trait CanRun extends ManagesSource:
+  def run()(using path: Path): Unit
+
+trait CanPackage extends ManagesSource:
+  def pack()(using path: Path): Unit
+
+trait CanBuild extends CanCompile with CanClean with CanTest with CanRun with CanPackage:
+  this: Tool =>
+  def build()(using path: Path): Unit =
+    checkRequirements(path)
+    if (canCompile()) then
+      compile()
+      // TODO think about adding a flag to skip tests and packing
+      // test()
+      // pack()
 
 case class BuiltInTool(
   override val name: String,
@@ -549,9 +646,15 @@ trait Font(
     val fonts = "fc-list".callText()
     if fonts.contains(fontFilePrefix) then InstalledVersion.NA else InstalledVersion.Absent
 
+case class ArtifactSet(val artifacts: Set[Artifact]):
+  def ++(other: ArtifactSet) = ArtifactSet(artifacts ++ other.artifacts)
+object ArtifactSet:
+  def apply(artifacts: Artifact*): ArtifactSet = ArtifactSet(artifacts.toSet)
+
 //added so tool functions like runText can be used in cases which don't clearly depend on a specific tool and hopefully avoids having to import os in most cases.
 //will also be used to hold higher level abstraction functions that use multiple tools and would only make sense in the context of this project
-object oztools extends BuiltInTool("oztools")
+object oztools extends BuiltInTool("oztools"):
+  override def scriptsFolder: Path = os.pwd / "common" / "scripts"
 
 object bash extends BuiltInTool("bash") with Shell
 
@@ -677,13 +780,15 @@ object brew extends Tool("brew", RequiredVersion.any(xcodeSelect, curl)):
 
 object scalaCli
     extends Tool("scala-cli", List(Dependency(xcodeSelect, RequiredVersion.AtLeast("14.3.0"))), versionLinePrefix = "Scala CLI version: ")
-    with Cleanup:
+    with CanCompile
+    with CanClean:
   override def install(requiredVersion: RequiredVersion): Unit =
     brew installFormula "Virtuslab/scala-cli/scala-cli"
   def installCompletions() =
     // it already checks if completions are installed, so no need to check for this case
     runVerbose("install", "completions")
   // TODO check if a file is a scala script file before trying to run it
+  override def postInstall(requiredVersion: RequiredVersion): Unit = installCompletions()
   def execute(script: Path, args: String*)(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]) =
     run((script.toString +: args)*)
   def executeText(script: Path, args: String*)(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]) =
@@ -698,23 +803,7 @@ object scalaCli
   ) =
     runVerboseText((script.toString +: args)*)
 
-  private def dirtySubFolders(path: Path) =
-    os.walk(path).filter(_.last == ".scala-build")
-    // TODO filter the ones we have no write access to
-  override def isDirty(path: Path): Boolean =
-    // for safety, we require that the path is at least one level below the home folder
-    require(
-      path.relativeTo(os.home).segments.size >= 1,
-      s"Path $path is not below the home folder",
-    )
-    println(
-      s"Checking if $path is dirty by recursively looking for .scala-build folders we could potentially remove...",
-    )
-    dirtySubFolders(path).nonEmpty
-  override def cleanup(path: Path): Unit =
-    println(s"Cleaning up $path from scala-cli .scala-build folders...")
-    // TODO confirmation for destructive operations
-    dirtySubFolders(path).foreach(os.remove.all(_))
+  override val compilePathName = ".scala-build"
 
 object python extends Tool("python") with Shell:
   def installedPackageVersion(packageName: String)(using wd: MaybeGiven[Path]): InstalledVersion =
@@ -736,7 +825,17 @@ object yaml extends Tool("yaml", RequiredVersion.any(python)):
 
 object git extends Tool("git"):
 
-  case class Remote(name: String, url: String)
+  case class Remote(name: String, url: String):
+    //in the case of github repos, the url can be https like https://github.com/oswaldo/tools.git or ssh like git@github.com:oswaldo/tools.git, so if we have one type, we compute the alternative other, but if it isn't a github repo, we just return the same url for now
+    val alternativeUrl: String = url match
+      case s if s.contains("github.com") =>
+        if s.startsWith("https://") then
+          s.replaceFirst("https://", "git@").replaceFirst("(/[^/])*/", "$1:")
+        else if s.startsWith("git@") then
+          s.replaceFirst(":([^:]*)", "/$1").replaceFirst("git@", "https://")
+        else
+          s
+      case _ => url
 
   private def parseRemoteLine(line: String): Remote =
     val parts = line.split("\\s+")
@@ -767,6 +866,7 @@ object git extends Tool("git"):
     subtreePull(folder, githubUserRepoUrl(githubUserAndRepo), branch)
 
   val thisRepo = "oswaldo/tools"
+
   // considering that the localRepoFolder is an already cloned or initialized git folder, cd into it and install the branch of the remoteRepo as a subtree
   def installSubtree(
     localRepoFolder: Path,
@@ -781,6 +881,12 @@ object git extends Tool("git"):
     else println(s"Using existing $localRepoFolder")
     println(s"Adding $remoteUrl as a subtree of $localRepoFolder")
     println(s"Checking if $remoteName ($remoteUrl) remote exists...")
+    remoteList().find(r => List(r.url, r.alternativeUrl).contains(remoteUrl)) match
+      case None => 
+        println(s"Remotes: ${remoteList().flatMap(r => List[String](r.url, r.alternativeUrl)).mkString("\n  ", "\n  ", "")} RemoteUrl: $remoteUrl")
+        ()
+      case Some(r) =>
+        throw new Exception(s"Remote $remoteName ($remoteUrl) already exists as ${if r.name != remoteName then s"${r.name} " else " "}${if r.url != remoteUrl then s"(${r.url})" else ""}")
     if !remoteList().exists(_.name == remoteName) then
       println(s"Adding $remoteName ($remoteUrl) remote...")
       remoteAdd(remoteName, remoteUrl)
@@ -790,6 +896,25 @@ object git extends Tool("git"):
       throw new Exception(s"Remote $remoteName already exists with a different url")
     else println(s"$remoteName ($remoteUrl) remote already exists")
     subtreeAdd(subtreeFolder, remoteUrl, branch)
+
+  // considering that the localRepoFolder is an already cloned or initialized git folder, cd into it and update the branch of the remoteRepo subtree
+  def pullSubtree(
+    localRepoFolder: Path,
+    subtreeFolder: RelPath,
+    remoteName: String,
+    remoteUrl: String,
+    branch: String = "main",
+  ) =
+    given wd: Path = localRepoFolder
+    if !os.exists(localRepoFolder) then throw new Exception(s"Local repo folder $localRepoFolder does not exist")
+    if !remoteList().exists(_.name == remoteName) then
+      //we fail here because we don't know if the user wants to add the remote or not
+      throw new Exception(s"Remote $remoteName does not exist")
+    else
+    // abort with an exception if the remote url is different
+    if remoteList().find(_.name == remoteName).get.url != remoteUrl then
+      throw new Exception(s"Remote $remoteName already exists with a different url")
+    subtreePull(subtreeFolder, remoteUrl, branch)
 
   def repoRootPath()(using wd: MaybeGiven[Path]): Option[Path] =
     Try(runText("rev-parse", "--show-toplevel")) match
