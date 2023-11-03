@@ -16,7 +16,8 @@ case class NewProgramArgs(
   programFolder: Path,
   programName: String,
 ):
-  require(programName.nonEmpty, "programName is required!")
+  // TODO think about adding refinement types to the toolkit
+  require(programName.nonEmpty, "programName is cannot be empty!")
 
 val newProgramArgs = Try {
   NewProgramArgs(
@@ -46,10 +47,6 @@ val removeNoEditsComment = StringReplacement(
   originalFragment =
     "// You are not expected to edit this file directly unless you are working on the oztools itself.\n",
   replacement = s"",
-)
-val replaceCoreScCommonPath = StringReplacement(
-  originalFragment = "../../core.sc",
-  replacement = "../../common/core.sc",
 )
 val replaceUsingComment = StringReplacement(
   originalFragment = "// using other scripts from the parent folder",
@@ -93,7 +90,7 @@ val programFileContents = doReplacements(
   os.read(templateFile),
   replaceNewProgramTemplateComment,
   removeNoEditsComment,
-  replaceCoreScCommonPath,
+  replaceCoreScCommonPath(programFolder),
   replaceUsingComment,
   replaceImportComment,
   replaceCamelProgramName,
