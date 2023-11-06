@@ -5,7 +5,7 @@
 //> using toolkit latest
 //> using dep "com.lihaoyi::pprint::0.8.1"
 //> using file "/Users/oswaldo.dantas/git/tools/common/core.sc"
-// add using statements for the scripts you want to use
+//> using file "picknext.sc"
 
 import os.*
 import core.*
@@ -14,23 +14,17 @@ import util.*
 import util.chaining.scalaUtilChainingOps
 import scala.annotation.tailrec
 import pprint.*
-// add import statements for the scripts you want to use
+import picknext.*
 
 given Array[String] = args
 
 case class PickNextArgs(
-  someRequiredArgument: Int,
-  someOptionalArgument: String,
-  someOptionalPath: Path,
-):
-  require(true, "some characteristic needs to be tested!")
+  //TODO something to initialize the name pool
+)
 
 val pickNextArgs = Try {
   PickNextArgs(
-    someRequiredArgument = argRequired(0, "someRequiredArgument is required!"),
-    someOptionalArgument = arg(1, "someDefaultValue"),
-    someOptionalPath = argCallerOrCurrentFolder(2),
-    // we could have as many arguments as we want, including from environment variables using argOrEnv or argOrEnvRequired
+    // parse args here
   )
 } match
   case Success(args) => args
@@ -47,3 +41,4 @@ val pickNextArgs = Try {
 import pickNextArgs.*
 //do some fancy stuff
 pprint.pprintln(pickNextArgs)
+runPickNext()
