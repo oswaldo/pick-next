@@ -9,16 +9,20 @@ import pprint.*
 import util.chaining.scalaUtilChainingOps
 import scala.reflect.ClassTag
 
-def arg[T: ClassTag](i: Int, default: => (T | String))(using args: Array[String], parser: (String) => Option[T]): T =
+def argOption[T: ClassTag](i: Int)(using args: Array[String], parser: (String) => Option[T]): Option[T] =
   Try {
     if args.length <= i then None
     else parser(args(i))
   } match
-    case Success(Some(value)) =>
+    case Success(value) =>
       value
     case Failure(e) =>
       throw e
-    case Success(None) =>
+
+def arg[T: ClassTag](i: Int, default: => (T | String))(using args: Array[String], parser: (String) => Option[T]): T =
+  argOption(i) match
+    case Some(value) => value
+    case None =>
       default match
         case s: String =>
           parser(s).getOrElse(throw new Exception(s"Arg $i: Parsing the default value $s resulted in None"))
@@ -42,17 +46,31 @@ given optionParser[T: ClassTag](using parser: (String => T)): (String => Option[
       case Failure(e) =>
         throw new Exception(s"Failed to parse $s as ${implicitly[ClassTag[T]].runtimeClass.getSimpleName}", e)
 
-def argOrEnv[T: ClassTag](i: Int, envKey: String, default: => (T | String))(using args: Array[String], parser: (String) => Option[T]): T =
-  arg(i,Option(System.getenv(envKey))
-    .flatMap(parser(_))
-    .getOrElse(default)
-  )
+def argOrEnvOption[T: ClassTag](i: Int, envKey: String)(using args: Array[String], parser: (String) => Option[T]): Option[T] =
+  argOption(i).orElse(Option(System.getenv(envKey)).flatMap(parser(_)))
+
+def argOrEnv[T: ClassTag](i: Int, envKey: String, default: => T)(using args: Array[String], parser: (String) => Option[T]): T =
+  argOrEnvOption(i, envKey).getOrElse(default)
 
 def argOrEnvRequired[T: ClassTag](i: Int, envKey: String, missingMessage: => String)(using args: Array[String], parser: (String) => T): T =
   argOrEnv(i, envKey, throw new Exception(s"Arg $i | Env $envKey: $missingMessage"))
 
-def argCallerOrCurrentFolder(i: Int)(using args: Array[String], parser: (String) => Path): Path =
-  argOrEnv(i, EnvCallerFolder, os.pwd)
+def argOrCallerFolderOption(i: Int)(using args: Array[String]): Option[Path] =
+  (Option(System.getenv(EnvCallerFolder)), argOption[String](i)) match
+    case (Some(callerFolder), None)                 => Some(Path(callerFolder))
+    case (caller, Some(argumentFolder))                  => 
+      if (argumentFolder.startsWith("/")) then Some(Path(argumentFolder))
+      else caller.map(Path(_) / RelPath(argumentFolder))
+    case (Some(callerFolder), Some(argumentFolder)) => Some(os.root / callerFolder / argumentFolder)
+    case (None, None)                               => None
+  
+def argOrCallerFolderRequired(i: Int, missingMessage: => String)(using args: Array[String]): Path =
+  argOrCallerFolderOption(i) match
+    case Some(path) => path
+    case None       => throw new Exception(s"Arg $i | Env $EnvCallerFolder: $missingMessage")
+  
+def argCallerOrCurrentFolder(i: Int)(using args: Array[String]): Path =
+  argOrCallerFolderOption(i).getOrElse(os.pwd)
 
 //it is a common case that the --version or equivalent of some tool outputs one or more lines where the line containing the actual version is prefixed by some string. this function tries to parse the version from the output of a tool that follows this pattern
 def parseVersionFromLines(lines: List[String], versionLinePrefix: String): InstalledVersion =
@@ -92,13 +110,13 @@ extension [T: ClassTag](mg: MaybeGiven[T])
       case _    => null.asInstanceOf[T]
 
 extension (p: proc)
-  def callLines()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): List[String] =
-    p.call(cwd = wd.orNull, env = env.orNull).out.lines().toList
-  def callUnit()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): Unit =
+  def callResult()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): os.CommandResult =
     p.call(cwd = wd.orNull, env = env.orNull)
+  def callLines()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): List[String] =
+    callResult().out.lines().toList
   def callText()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): String =
-    p.call(cwd = wd.orNull, env = env.orNull).out.text().trim()
-  def callVerbose()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): Unit =
+    callResult().out.text().trim()
+  def callVerbose()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): os.CommandResult =
     p.call(
       stdout = os.Inherit,
       stderr = os.Inherit,
@@ -106,26 +124,23 @@ extension (p: proc)
       env = env.orNull,
     )
   def callVerboseText()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): String =
-    p.call(
-      stdout = os.Inherit,
-      stderr = os.Inherit,
-      cwd = wd.orNull,
-      env = env.orNull,
-    ).out
-      .text()
-      .trim()
+    callVerbose().out.text().trim()
+  def callVerboseLines()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): List[String] =
+    callVerbose().out.lines().toList
 
 extension (commandWithArguments: List[String])
   def callLines()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): List[String] =
     os.proc(commandWithArguments).callLines()
-  def callUnit()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): Unit =
-    os.proc(commandWithArguments).callUnit()
+  def callResult()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): os.CommandResult =
+    os.proc(commandWithArguments).callResult()
   def callText()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): String =
     os.proc(commandWithArguments).callText()
-  def callVerbose()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): Unit =
+  def callVerbose()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): os.CommandResult =
     os.proc(commandWithArguments).callVerbose()
   def callVerboseText()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): String =
     os.proc(commandWithArguments).callVerboseText()
+  def callVerboseLines()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): List[String] =
+    os.proc(commandWithArguments).callVerboseLines()
 
 extension (commandWithArguments: String)
   def splitCommandWithArguments(): List[String] =
@@ -133,11 +148,11 @@ extension (commandWithArguments: String)
     commandWithArguments.split(" ").toList
   def callLines()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): List[String] =
     os.proc(commandWithArguments.splitCommandWithArguments()).callLines()
-  def callUnit()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): Unit =
-    os.proc(commandWithArguments.splitCommandWithArguments()).callUnit()
+  def callResult()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): os.CommandResult =
+    os.proc(commandWithArguments.splitCommandWithArguments()).callResult()
   def callText()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): String =
     os.proc(commandWithArguments.splitCommandWithArguments()).callText()
-  def callVerbose()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): Unit =
+  def callVerbose()(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): os.CommandResult =
     os.proc(commandWithArguments.splitCommandWithArguments()).callVerbose()
 
 def which(name: String): Option[Path] =
@@ -198,11 +213,18 @@ val replaceCoreScAbsolutePath = StringReplacement(
   replacement = (os.pwd / "common" / "core.sc").toString,
 )
 
+def pathInTools(path: Path) = path.toString.startsWith(os.pwd.toString)
+
 def replaceCoreScCommonPath(path: Path) = StringReplacement(
   originalFragment = "../../core.sc",
   replacement = {
-    //we need to check the depth of the path relative to the common folder, and then generate the relative path to the common folder. for instance, if the new script being generated will live in xzy/scripts, the relative path to the common folder will be ../../common/core.sc
-    "../" * path.relativeTo(os.pwd / "common").segments.size + "common/core.sc"
+    //first we check if path is a subfolder of os.pwd
+    val result = if pathInTools(path) then
+      //we need to check the depth of the path relative to the common folder, and then generate the relative path to the common folder. for instance, if the new script being generated will live in xzy/scripts, the relative path to the common folder will be ../../common/core.sc
+      "../" * path.relativeTo(os.pwd / "common").segments.size + "common/core.sc"
+    else
+      os.pwd / "common" / "core.sc"
+    result.toString
   },
 )
 
@@ -475,8 +497,8 @@ trait Tool(
     s"$name ${args.mkString(" ")}"
   def tryCallLines(args: String*)(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): Try[List[String]] =
     Try((name :: args.toList).callLines())
-  def run(args: List[String])(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): Unit =
-    (name :: args).callUnit()
+  def run(args: List[String])(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): os.CommandResult =
+    (name :: args).callResult()
   def run(args: String*)(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): Unit =
     run(args.toList)
   def runText(args: List[String])(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): String =
@@ -495,6 +517,11 @@ trait Tool(
   def runVerboseText(args: String*)(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): String =
     println(s"running ${callAsString(args*)}")
     (name :: args.toList).callVerboseText()
+  def runVerboseLines(args: List[String])(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): List[String] =
+    println(s"running ${callAsString(args*)}")
+    (name :: args).callVerboseLines()
+  def runVerboseLines(args: String*)(using wd: MaybeGiven[Path], env: MaybeGiven[Map[String, String]]): List[String] =
+    runVerboseLines(args.toList)
 
 case class ToolExtension(
   val extensionId: String,
@@ -747,7 +774,7 @@ object hdiutil extends BuiltInTool("hdiutil"):
 object installer extends BuiltInTool("installer"):
   def installPkg(pkg: Path): Unit =
     // using a list instead of a string to avoid having to worry about escaping the path for now
-    List("sudo", "installer", "-pkg", pkg.toString, "-target", "/").callUnit()
+    List("sudo", "installer", "-pkg", pkg.toString, "-target", "/").callResult()
   def installDmg(dmgFilePath: Path, pkgFileName: String): Unit =
     Using(DmgFile(dmgFilePath)) { dmg =>
       val volume = dmg.volume
@@ -822,132 +849,3 @@ object six extends Tool("six", RequiredVersion.any(python)):
 object yaml extends Tool("yaml", RequiredVersion.any(python)):
   override def installedVersion()(using wd: MaybeGiven[Path]): InstalledVersion =
     python.installedPackageVersion(name)
-
-object git extends Tool("git"):
-
-  case class Remote(name: String, url: String):
-    //in the case of github repos, the url can be https like https://github.com/oswaldo/tools.git or ssh like git@github.com:oswaldo/tools.git, so if we have one type, we compute the alternative other, but if it isn't a github repo, we just return the same url for now
-    val alternativeUrl: String = url match
-      case s if s.contains("github.com") =>
-        if s.startsWith("https://") then
-          s.replaceFirst("https://", "git@").replaceFirst("(/[^/])*/", "$1:")
-        else if s.startsWith("git@") then
-          s.replaceFirst(":([^:]*)", "/$1").replaceFirst("git@", "https://")
-        else
-          s
-      case _ => url
-
-  private def parseRemoteLine(line: String): Remote =
-    val parts = line.split("\\s+")
-    Remote(parts(0), parts(1))
-
-  def clone(repo: String)(path: Path = os.home / "git" / repo.split("/").last) =
-    runVerbose("clone", repo, path.toString)
-  def remoteList()(using wd: Path = os.pwd) =
-    runLines("remote", "-v")
-      .filter(_.trim.endsWith("(fetch)"))
-      .map(parseRemoteLine)
-  def remoteAdd(remoteName: String, remoteUrl: String)(using wd: Path = os.pwd) =
-    runVerbose("remote", "add", remoteName, remoteUrl)
-  def subtreeAdd(folder: RelPath, remoteUrl: String, branch: String)(using wd: Path = os.pwd) =
-    runVerbose("subtree", "add", "--prefix", folder.toString, remoteUrl, branch, "--squash")
-  def subtreePull(folder: RelPath, remoteUrl: String, branch: String)(using wd: Path = os.pwd) =
-    runVerbose("subtree", "pull", "--prefix", folder.toString, remoteUrl, branch, "--squash")
-  def githubUserRepoUrl(githubUserAndRepo: String) = s"https://github.com/$githubUserAndRepo.git"
-  def hubClone(githubUserAndRepo: String)(
-    path: Path = os.home / "git" / githubUserAndRepo.split("/").last,
-  )(using wd: Path = os.pwd) =
-    clone(githubUserRepoUrl(githubUserAndRepo))(path)
-  def hubRemoteAdd(remoteName: String, githubUserAndRepo: String)(using wd: Path = os.pwd) =
-    remoteAdd(remoteName, githubUserRepoUrl(githubUserAndRepo))
-  def hubSubtreeAdd(folder: RelPath, githubUserAndRepo: String, branch: String)(using wd: Path = os.pwd) =
-    subtreeAdd(folder, githubUserRepoUrl(githubUserAndRepo), branch)
-  def hubSubtreePull(folder: RelPath, githubUserAndRepo: String, branch: String)(using wd: Path = os.pwd) =
-    subtreePull(folder, githubUserRepoUrl(githubUserAndRepo), branch)
-
-  val thisRepo = "oswaldo/tools"
-
-  // considering that the localRepoFolder is an already cloned or initialized git folder, cd into it and install the branch of the remoteRepo as a subtree
-  def installSubtree(
-    localRepoFolder: Path,
-    subtreeFolder: RelPath,
-    remoteName: String,
-    remoteUrl: String,
-    branch: String = "main",
-  ) =
-    given wd: Path = localRepoFolder
-    if !os.exists(localRepoFolder) then throw new Exception(s"Local repo folder $localRepoFolder does not exist")
-    // TODO also check if it's a initialized git repo, with at least one commit, otherwise git subtree add will fail with "ambiguous argument 'HEAD': unknown revision or path not in the working tree."
-    else println(s"Using existing $localRepoFolder")
-    println(s"Adding $remoteUrl as a subtree of $localRepoFolder")
-    println(s"Checking if $remoteName ($remoteUrl) remote exists...")
-    remoteList().find(r => List(r.url, r.alternativeUrl).contains(remoteUrl)) match
-      case None => 
-        println(s"Remotes: ${remoteList().flatMap(r => List[String](r.url, r.alternativeUrl)).mkString("\n  ", "\n  ", "")} RemoteUrl: $remoteUrl")
-        ()
-      case Some(r) =>
-        throw new Exception(s"Remote $remoteName ($remoteUrl) already exists as ${if r.name != remoteName then s"${r.name} " else " "}${if r.url != remoteUrl then s"(${r.url})" else ""}")
-    if !remoteList().exists(_.name == remoteName) then
-      println(s"Adding $remoteName ($remoteUrl) remote...")
-      remoteAdd(remoteName, remoteUrl)
-    else
-    // abort with an exception if the remote url is different
-    if remoteList().find(_.name == remoteName).get.url != remoteUrl then
-      throw new Exception(s"Remote $remoteName already exists with a different url")
-    else println(s"$remoteName ($remoteUrl) remote already exists")
-    subtreeAdd(subtreeFolder, remoteUrl, branch)
-
-  // considering that the localRepoFolder is an already cloned or initialized git folder, cd into it and update the branch of the remoteRepo subtree
-  def pullSubtree(
-    localRepoFolder: Path,
-    subtreeFolder: RelPath,
-    remoteName: String,
-    remoteUrl: String,
-    branch: String = "main",
-  ) =
-    given wd: Path = localRepoFolder
-    if !os.exists(localRepoFolder) then throw new Exception(s"Local repo folder $localRepoFolder does not exist")
-    if !remoteList().exists(_.name == remoteName) then
-      //we fail here because we don't know if the user wants to add the remote or not
-      throw new Exception(s"Remote $remoteName does not exist")
-    else
-    // abort with an exception if the remote url is different
-    if remoteList().find(_.name == remoteName).get.url != remoteUrl then
-      throw new Exception(s"Remote $remoteName already exists with a different url")
-    subtreePull(subtreeFolder, remoteUrl, branch)
-
-  def repoRootPath()(using wd: MaybeGiven[Path]): Option[Path] =
-    Try(runText("rev-parse", "--show-toplevel")) match
-      case Success(path) if path.nonEmpty => Some(Path(path))
-      case _                              => None
-  
-  def isRepo()(using wd: MaybeGiven[Path]) =
-    repoRootPath().nonEmpty
-
-  def isPathIgnored(path: RelPath)(using wd: MaybeGiven[Path]) =
-    println(s"Checking if $path is ignored...")
-    Try(runText("check-ignore", path.toString).nonEmpty) match
-      case Success(_)  => true
-      case Failure(e: os.SubprocessException) 
-        if e.result.exitCode == 1 => false
-      case _ => throw new Exception(s"Failed to check if $path is ignored")
-
-  // TODO think about checking first if it is a repo, making it one if needed, stashing stuff if needed and only failing if it's dirty
-  def ignore(paths: RelPath*)(using wd: MaybeGiven[Path]) =
-    val ignorePaths = paths.filterNot(isPathIgnored(_))
-    if ignorePaths.isEmpty then println("Nothing to ignore")
-    else
-      println(s"Adding to .gitignore the following paths:\n${ignorePaths.mkString("\n")}")
-      val rootPath = wd match
-        case path: Path => path
-        case _          => os.pwd
-      val gitIgnorePath = rootPath / ".gitignore"
-      val gitIgnoreLines = Try(os.read.lines(gitIgnorePath)) match
-        case Success(lines) => lines
-        case _              => Nil
-      val newGitIgnoreLines = gitIgnoreLines ++ ignorePaths.map{ path =>
-        s"${path.toString}${if os.isDir(rootPath / path) then "/" else ""}"
-      }
-      os.write.over(gitIgnorePath, newGitIgnoreLines.mkString("", "\n", "\n"))
-
-end git
