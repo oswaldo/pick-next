@@ -11,6 +11,6 @@ lazy val root = project
     name := "laminar-scalajs",
     libraryDependencies ++= Seq(
       "com.raquo"    %%% "laminar"     % "16.0.0",
-      "org.scala-js" %%% "scalajs-dom" % "2.4.0",
+      "org.scala-js" %%% "scalajs-dom" % "2.8.0",
     ),
   )
