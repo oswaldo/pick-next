@@ -130,22 +130,24 @@ def askForNotAvailable(selection: List[(Role, Person)]): List[Role] =
   selection.map(_._1).filterNot(role => availability.exists(_.lastRole.contains(role)))
   
 
+def runPickNext() =
+  //Now the fun begins
+  //Let's prepare to pick the next people to take the roles
+  //First, init the people folder and roles.json file if needed
+  initRoles()
+  //Then, init the remaining.json file if needed
+  initRemaining()
+  //Then, read the roles from roles.json
+  var roles = readRoles()
+  //Then, keep picking people until all roles are filled
+  while roles.nonEmpty do
+    //Read the remaining people from remaining.json
+    val remaining = readPeople(remainingFile)
+    //Pick the next people to take the roles
+    val selection = pickAndPrint(remaining, roles)
+    //Ask the user if each pearson is available to take the role, updating the people and remaining files accordingly and returning the roles that need another round of picking
+    roles = askForNotAvailable(selection)
 
-//Now the fun begins
-//Let's prepare to pick the next people to take the roles
-//First, init the people folder and roles.json file if needed
-initRoles()
-//Then, init the remaining.json file if needed
-initRemaining()
-//Then, read the roles from roles.json
-var roles = readRoles()
-//Then, keep picking people until all roles are filled
-while roles.nonEmpty do
-  //Read the remaining people from remaining.json
-  val remaining = readPeople(remainingFile)
-  //Pick the next people to take the roles
-  val selection = pickAndPrint(remaining, roles)
-  //Ask the user if each pearson is available to take the role, updating the people and remaining files accordingly and returning the roles that need another round of picking
-  roles = askForNotAvailable(selection)
+runPickNext()
 
 //That's all folks!
