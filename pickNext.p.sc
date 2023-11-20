@@ -19,7 +19,7 @@ import picknext.*
 given Array[String] = args
 
 case class PickNextArgs(
-  //TODO something to initialize the name pool
+  // TODO something to initialize the name pool
 )
 
 val pickNextArgs = Try {
