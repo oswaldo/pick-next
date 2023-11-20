@@ -11,10 +11,10 @@ import util.*
 import os.*
 import java.util.UUID
 
-enum virtualBoxImage(val vmImage: vmImage, val vmName: String, val osType: String):
+enum virtualBoxImage(val vmImage: osboxes.vmImage, val vmName: String, val osType: String):
   case ubuntu23_04
       extends virtualBoxImage(
-        vmImage.ubuntu23_04,
+        osboxes.vmImage.ubuntu23_04,
         vmName = "Constructed Ubuntu 23.04 Lunar Lobster",
         osType = "Ubuntu_64",
       )
@@ -36,10 +36,10 @@ object virtualBox extends Tool("vboxmanage"):
       case _ =>
         brew.installFormula("virtualbox")
 
-  override def installedVersion(): InstalledVersion =
+  override def installedVersion()(using wd: MaybeGiven[Path]): InstalledVersion =
     tryRunLines("--version") match
       case Success(v) =>
-        InstalledVersion.Version(v.head.trim())
+        InstalledVersion.Version(v.head.trim().replace("_", "-").replace("BETA", "BETA.").replace("r", "+r"))
       case _ => InstalledVersion.Absent
 
   case class RegisteredVm(val name: String, val uuid: UUID)
@@ -57,7 +57,9 @@ object virtualBox extends Tool("vboxmanage"):
           println("Found VM: " + name + " with UUID " + uuid)
           RegisteredVm(name, UUID.fromString(uuid))
         }
-      case _ => Nil
+      case e =>
+        println("Could not find VMs: " + e)
+        Nil
 
   def createVm(image: virtualBoxImage): Option[RegisteredVm] =
     listVms().find(_.name == image.vmName) match
@@ -83,7 +85,7 @@ object virtualBox extends Tool("vboxmanage"):
         println("Created VM: " + image.vmName + " with UUID " + uuid)
         Some(RegisteredVm(image.vmName, uuid))
 
-  def configureVm(vm: RegisteredVm, cpus: Int = 2, memory: Int = 2048, vram: Int = 12) =
+  def configureVm(vm: RegisteredVm, cpus: Int = 2, memory: Int = 4096, vram: Int = 128) =
     runVerbose(
       "modifyvm",
       vm.name,
@@ -225,4 +227,13 @@ object virtualBox extends Tool("vboxmanage"):
       configureBootOrder(vm)
       vm
     }
+
+  def constructVmIfNeeded(image: virtualBoxImage): Option[RegisteredVm] =
+    listVms().find(_.name == image.vmName) match
+      case Some(vm) =>
+        println("VM already created: " + vm)
+        Some(vm)
+      case None =>
+        constructVm(image)
+
 end virtualBox

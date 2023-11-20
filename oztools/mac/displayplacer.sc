@@ -4,43 +4,25 @@
 //> using file "../common/core.sc"
 //> using file "../common/tools.sc"
 
-import core.* 
-import tools.* 
+import core.*
+import tools.*
 import util.*
 
-
-object displayplacer extends Tool("displayplacer"):
-
-  override def installedVersion(): InstalledVersion =
-    val versionLinePrefix = "displayplacer v"
-    Try(runText("--version")) match
-      case Success(v) =>
-        Some(v).filter(_.contains(versionLinePrefix)).map(_.trim) match
-          case None => InstalledVersion.NA
-          case Some(v) =>
-            InstalledVersion.Version(
-              v.linesIterator
-                .find(_.startsWith(versionLinePrefix))
-                .get
-                .stripPrefix(versionLinePrefix)
-                .split(" ")
-                .head,
-            )
-      case _ => InstalledVersion.Absent
+object displayplacer extends Tool("displayplacer", versionLinePrefix = "displayplacer v"):
 
   override def install(requiredVersion: RequiredVersion): Unit =
     brew.tap("jakehilborn/jakehilborn")
     brew.installFormula("displayplacer")
 
   case class Display(
-      id: String,
-      tpe: String = "",
-      resolution: (Int, Int) = (0, 0),
-      scaling: Boolean = false,
+    id: String,
+    tpe: String = "",
+    resolution: (Int, Int) = (0, 0),
+    scaling: Boolean = false,
   )
 
   enum Position(val origin: ((Int, Int)) => (Int, Int)):
-    case Left extends Position((w, _) => (w, 0))
+    case Left  extends Position((w, _) => (w, 0))
     case Right extends Position((w, _) => (-w, 0))
     case Above extends Position((_, h) => (0, h))
     case Below extends Position((_, h) => (0, -h))
@@ -53,11 +35,13 @@ object displayplacer extends Tool("displayplacer"):
         case "below" => Some(Below)
         case _       => None
 
+  given optionalPositionParser: (String => Option[Position]) = Position.fromString(_)
+
   def displays(): List[Display] =
-    val idLine = "Contextual screen id:"
+    val idLine         = "Contextual screen id:"
     val resolutionLine = "Resolution:"
-    val scalingLine = "Scaling: "
-    val typeLine = "Type:"
+    val scalingLine    = "Scaling: "
+    val typeLine       = "Type:"
     runLines("list")
       .foldLeft(List.empty[Display]) {
         case (acc, line) if line.startsWith(idLine) =>
@@ -83,31 +67,28 @@ object displayplacer extends Tool("displayplacer"):
 
   def placeBuiltIn(position: Position = Position.Below): Unit =
     val currentDisplays = displays()
-    val builtinTpe = "MacBook built in screen"
+    val builtinTpe      = "MacBook built in screen"
     println(
       "current displays: \n" + currentDisplays
-        .map(d =>
-          s"  id: ${d.id}, type: ${d.tpe}, resolution: ${d.resolution._1}x${d.resolution._2}",
-        )
+        .map(d => s"  id: ${d.id}, type: ${d.tpe}, resolution: ${d.resolution._1}x${d.resolution._2}")
         .mkString("\n"),
     )
     val (builtin, external) =
-      currentDisplays.partition(_.tpe == builtinTpe) match {
+      currentDisplays.partition(_.tpe == builtinTpe) match
         case (builtin :: Nil, external :: Nil) => (builtin, external)
         case _ =>
           println(
             "aborting as there are not 2 displays or the builtin display is not available",
           )
           return
-      }
     val arguments =
       currentDisplays
         .map(d =>
           s"""id:${d.id} res:${d.resolution._1}x${d.resolution._2} scaling:${
               if d.scaling then "on" else "off"
             } origin:(${val o =
-              (if d.id == builtin.id then (0, 0)
-               else position.origin(external.resolution))
+              if d.id == builtin.id then (0, 0)
+              else position.origin(external.resolution)
               s"${o._1},${o._2}"
             }) degree:0""",
         )
@@ -118,7 +99,7 @@ object displayplacer extends Tool("displayplacer"):
 
     run(arguments)
 
-  def placeBuiltInLeft(): Unit = placeBuiltIn(Position.Left)
+  def placeBuiltInLeft(): Unit  = placeBuiltIn(Position.Left)
   def placeBuiltInRight(): Unit = placeBuiltIn(Position.Right)
   def placeBuiltInAbove(): Unit = placeBuiltIn(Position.Above)
   def placeBuiltInBelow(): Unit = placeBuiltIn(Position.Below)
